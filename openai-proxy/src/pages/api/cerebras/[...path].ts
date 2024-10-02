@@ -20,7 +20,7 @@ export default async function handler(req: NextRequest) {
   if (TARGET_BASE_URL) {
     console.log('Target base URL found in environment variables.')
   } else {
-    console.warn('Target base URL not found in environment variables. Using default: https://api.cerebras.com')
+    console.warn('Target base URL not found in environment variables. Using default: https://api.cerebras.ai')
   }
 
   try {
