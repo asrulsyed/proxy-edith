@@ -1,4 +1,4 @@
-// src/pages/api/openai/[...path].ts
+// src/pages/api/cerebras/[...path].ts
 import { NextRequest } from 'next/server'
 
 export const config = {
@@ -29,8 +29,6 @@ export default async function handler(req: NextRequest) {
       method: req.method,
       headers: headers,
       body: req.body,
-      // Important: duplex setting for streaming compatibility
-      duplex: 'half',
     })
 
     // Prepare response headers
@@ -38,29 +36,15 @@ export default async function handler(req: NextRequest) {
     responseHeaders.delete('transfer-encoding')
     responseHeaders.delete('connection')
 
-    // If the response is streaming, we need to handle it differently
+    // Check if the response is streaming based on content-type
     const isStreaming = response.headers.get('content-type')?.includes('stream')
 
     if (isStreaming) {
-      // For streaming responses, create a TransformStream to process chunks
-      const transformStream = new TransformStream({
-        transform(chunk, controller) {
-          controller.enqueue(chunk)
-        },
-      })
-
-      // Pipe the response body through our transform stream
-      const streamedResponse = response.body?.pipeThrough(transformStream)
-      
-      if (!streamedResponse) {
-        throw new Error('No response body')
-      }
-
-      // Return a streaming response
-      return new Response(streamedResponse, {
+      // Return a streaming response directly using the response body
+      return new Response(response.body, {
         status: response.status,
         headers: responseHeaders,
-      })
+      }) 
     }
 
     // For non-streaming responses, forward as-is
