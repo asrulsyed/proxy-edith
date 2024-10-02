@@ -1,11 +1,11 @@
-// src/pages/api/cerebras/[...path].ts
+// src/pages/api/openai/[...path].ts
 import { NextRequest } from 'next/server'
 
 export const config = {
   runtime: 'edge',
 }
 
-const TARGET_BASE_URL = process.env.TARGET_BASE_URL || 'https://api.cerebras.ai'
+const TARGET_BASE_URL = process.env.TARGET_BASE_URL || 'https:aaaa'
 const API_KEY = process.env.API_KEY
 
 export default async function handler(req: NextRequest) {
@@ -29,6 +29,10 @@ export default async function handler(req: NextRequest) {
       method: req.method,
       headers: headers,
       body: req.body,
+      // Important: duplex setting for streaming compatibility
+      // Duplex option is not available in Fetch API on the edge runtime
+      // Instead, we will handle streaming manually below
+      // duplex: 'half', 
     })
 
     // Prepare response headers
@@ -36,15 +40,29 @@ export default async function handler(req: NextRequest) {
     responseHeaders.delete('transfer-encoding')
     responseHeaders.delete('connection')
 
-    // Check if the response is streaming based on content-type
+    // If the response is streaming, we need to handle it differently
     const isStreaming = response.headers.get('content-type')?.includes('stream')
 
     if (isStreaming) {
-      // Return a streaming response directly using the response body
-      return new Response(response.body, {
+      // For streaming responses, create a TransformStream to process chunks
+      const transformStream = new TransformStream({
+        transform(chunk, controller) {
+          controller.enqueue(chunk)
+        },
+      })
+
+      // Pipe the response body through our transform stream
+      const streamedResponse = response.body?.pipeThrough(transformStream)
+      
+      if (!streamedResponse) {
+        throw new Error('No response body')
+      }
+
+      // Return a streaming response
+      return new Response(streamedResponse, {
         status: response.status,
         headers: responseHeaders,
-      }) 
+      })
     }
 
     // For non-streaming responses, forward as-is
