@@ -8,6 +8,19 @@ export const config = {
 const TARGET_BASE_URL = process.env.TARGET_BASE_URL || 'https://api.cerebras.com'
 const API_KEY = process.env.API_KEY
 
+// Check if API key and target URL are available in the environment
+if (API_KEY) {
+  console.log('API key found in environment variables.')
+} else {
+  console.warn('API key not found in environment variables. Requests may fail.')
+}
+
+if (TARGET_BASE_URL) {
+  console.log('Target base URL found in environment variables.')
+} else {
+  console.warn('Target base URL not found in environment variables. Using default: https://api.cerebras.com')
+}
+
 export default async function handler(req: NextRequest) {
   try {
     const path = req.url.split('/api/cerebras/')[1]
