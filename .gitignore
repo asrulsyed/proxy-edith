@@ -2,3 +2,4 @@ openai-proxy/.env.local
 openai-proxy/.next
 openai-proxy/node_modules
 openai-proxy/package-lock.json
+openai-proxy/.env
