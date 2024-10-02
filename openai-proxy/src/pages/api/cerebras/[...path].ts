@@ -7,7 +7,7 @@ export const config = {
 
 export default async function handler(req: NextRequest) {
   // Access environment variables at runtime
-  const TARGET_BASE_URL = process.env.TARGET_BASE_URL || 'https://api.cerebras.com'
+  const TARGET_BASE_URL = process.env.TARGET_BASE_URL || 'https://api.cerebras.ai'
   const API_KEY = process.env.API_KEY
 
   // Check if API key and target URL are available at runtime
