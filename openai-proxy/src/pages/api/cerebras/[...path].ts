@@ -1,4 +1,3 @@
-// src/pages/api/openai/[...path].ts
 import { NextRequest } from 'next/server'
 
 export const config = {
@@ -7,9 +6,32 @@ export const config = {
 
 const TARGET_BASE_URL = process.env.TARGET_BASE_URL || 'https:aaaa'
 const API_KEY = process.env.API_KEY
+const RATE_LIMIT_DURATION = 1000 // 2 seconds in milliseconds
+
+// Using a Map to store the last request time for each IP
+const ipLastRequestMap = new Map<string, number>()
+
+async function waitForCooldown(ip: string): Promise<void> {
+  const lastRequestTime = ipLastRequestMap.get(ip) || 0
+  const currentTime = Date.now()
+  const timeElapsed = currentTime - lastRequestTime
+  
+  if (timeElapsed < RATE_LIMIT_DURATION) {
+    const waitTime = RATE_LIMIT_DURATION - timeElapsed
+    await new Promise(resolve => setTimeout(resolve, waitTime))
+  }
+  
+  ipLastRequestMap.set(ip, Date.now())
+}
 
 export default async function handler(req: NextRequest) {
   try {
+    // Get the client's IP address
+    const clientIP = req.headers.get('x-forwarded-for') || 'unknown-ip'
+    
+    // Wait for the cooldown period if necessary
+    await waitForCooldown(clientIP)
+    
     const path = req.url.split('/api/cerebras/')[1]
     const targetUrl = `${TARGET_BASE_URL}/${path}`
 
@@ -29,10 +51,6 @@ export default async function handler(req: NextRequest) {
       method: req.method,
       headers: headers,
       body: req.body,
-      // Important: duplex setting for streaming compatibility
-      // Duplex option is not available in Fetch API on the edge runtime
-      // Instead, we will handle streaming manually below
-      // duplex: 'half', 
     })
 
     // Prepare response headers
@@ -42,7 +60,6 @@ export default async function handler(req: NextRequest) {
 
     // If the response is streaming, we need to handle it differently
     const isStreaming = response.headers.get('content-type')?.includes('stream')
-
     if (isStreaming) {
       // For streaming responses, create a TransformStream to process chunks
       const transformStream = new TransformStream({
@@ -53,7 +70,6 @@ export default async function handler(req: NextRequest) {
 
       // Pipe the response body through our transform stream
       const streamedResponse = response.body?.pipeThrough(transformStream)
-      
       if (!streamedResponse) {
         throw new Error('No response body')
       }
