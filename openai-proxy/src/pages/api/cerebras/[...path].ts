@@ -41,16 +41,17 @@ export default async function handler(req: NextRequest) {
     // Update or add necessary headers
     headers.set('Authorization', `Bearer ${API_KEY}`)
     headers.set('Host', new URL(TARGET_BASE_URL).host)
+    headers.set('Content-Type', 'application/json') // Important for tool calls
     
     // Remove any headers that might cause issues
     headers.delete('connection')
     headers.delete('transfer-encoding')
 
-    // Forward the request to OpenAI
+    // Forward the request to Cerebras
     const response = await fetch(targetUrl, {
       method: req.method,
       headers: headers,
-      body: req.body,
+      body: req.body, // Forward the body as-is
     })
 
     // Prepare response headers
