@@ -13,12 +13,12 @@ async function waitForCooldown(ip: string): Promise<void> {
   const lastRequestTime = ipLastRequestMap.get(ip) || 0
   const currentTime = Date.now()
   const timeElapsed = currentTime - lastRequestTime
-  
+
   if (timeElapsed < RATE_LIMIT_DURATION) {
     const waitTime = RATE_LIMIT_DURATION - timeElapsed
     await new Promise(resolve => setTimeout(resolve, waitTime))
   }
-  
+
   ipLastRequestMap.set(ip, Date.now())
 }
 
@@ -31,20 +31,21 @@ function getCorsHeaders(origin: string | null): Headers {
       'Content-Type',
       'OpenAI-Beta',
       'OpenAI-Organization',
-      'User-Agent',          // Added User-Agent
-      'Accept',              // Commonly needed
-      'Origin',              // Commonly needed
-      'Referer',             // Sometimes needed
-      'Client-Sdk',          // Sometimes needed by OpenAI SDK
-      'X-Requested-With'     // Sometimes needed
+      'User-Agent', 
+      'Accept',             
+      'Origin',              
+      'Referer',            
+      'Client-Sdk',         
+      'X-Requested-With',    
+      'x-stainless-arch' // Add your custom header (if needed)
     ].join(', ')
   });
 
-  // Handle origin
   if (origin) {
-    headers.set('Access-Control-Allow-Origin', origin);
+    headers.set('Access-Control-Allow-Origin', origin); // Allow your Ionic app's origin
   } else {
-    headers.set('Access-Control-Allow-Origin', '*');
+    headers.set('Access-Control-Allow-Origin', '*'); // Allow all origins (less secure - uncomment only for development if needed)
+    // It's safer to specify the origin(s) you want to allow during production
   }
 
   return headers;
@@ -71,7 +72,7 @@ export default async function handler(req: NextRequest) {
     const targetUrl = `${MISTRAL_BASE_URL}/${path}`
 
     const headers = new Headers(req.headers)
-    
+
     const apiKey = headers.get('authorization')?.split('Bearer ')[1] || process.env.MISTRAL_API_KEY
     if (!apiKey) {
       return new Response(
@@ -89,7 +90,7 @@ export default async function handler(req: NextRequest) {
     headers.set('Authorization', `Bearer ${apiKey}`)
     headers.set('Host', 'api.mistral.ai')
     headers.set('Content-Type', 'application/json')
-    
+
     headers.delete('connection')
     headers.delete('transfer-encoding')
 
@@ -103,7 +104,7 @@ export default async function handler(req: NextRequest) {
     corsHeaders.forEach((value, key) => {
       responseHeaders.set(key, value);
     });
-    
+
     responseHeaders.delete('transfer-encoding')
     responseHeaders.delete('connection')
 
