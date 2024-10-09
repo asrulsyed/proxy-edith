@@ -39,6 +39,7 @@ function getCorsHeaders(origin: string | null): Headers {
       'X-Requested-With',    
       'x-stainless-arch', // Add your custom header (if needed)
       'x-stainless-lang',
+      'x-stainless-os',
     ].join(', ')
   });
 
