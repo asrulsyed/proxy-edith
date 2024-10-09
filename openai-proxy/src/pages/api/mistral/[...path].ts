@@ -37,7 +37,8 @@ function getCorsHeaders(origin: string | null): Headers {
       'Referer',            
       'Client-Sdk',         
       'X-Requested-With',    
-      'x-stainless-arch' // Add your custom header (if needed)
+      'x-stainless-arch', // Add your custom header (if needed)
+      'x-stainless-lang',
     ].join(', ')
   });
 
