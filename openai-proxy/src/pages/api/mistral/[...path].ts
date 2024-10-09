@@ -5,9 +5,8 @@ export const config = {
 }
 
 const MISTRAL_BASE_URL = 'https://api.mistral.ai/v1'
-const RATE_LIMIT_DURATION = 1000 // 1 second in milliseconds
+const RATE_LIMIT_DURATION = 1000
 
-// Using a Map to store the last request time for each IP
 const ipLastRequestMap = new Map<string, number>()
 
 async function waitForCooldown(ip: string): Promise<void> {
@@ -23,24 +22,35 @@ async function waitForCooldown(ip: string): Promise<void> {
   ipLastRequestMap.set(ip, Date.now())
 }
 
-// CORS headers helper function
 function getCorsHeaders(origin: string | null): Headers {
   const headers = new Headers({
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type, OpenAI-Beta, OpenAI-Organization',
+    'Access-Control-Allow-Headers': [
+      'Authorization',
+      'Content-Type',
+      'OpenAI-Beta',
+      'OpenAI-Organization',
+      'User-Agent',          // Added User-Agent
+      'Accept',              // Commonly needed
+      'Origin',              // Commonly needed
+      'Referer',             // Sometimes needed
+      'Client-Sdk',          // Sometimes needed by OpenAI SDK
+      'X-Requested-With'     // Sometimes needed
+    ].join(', ')
   });
 
-  // Check if the origin is allowed (you can implement your own logic here)
+  // Handle origin
   if (origin) {
     headers.set('Access-Control-Allow-Origin', origin);
+  } else {
+    headers.set('Access-Control-Allow-Origin', '*');
   }
 
   return headers;
 }
 
 export default async function handler(req: NextRequest) {
-  // Get the origin from the request headers
   const origin = req.headers.get('origin');
   const corsHeaders = getCorsHeaders(origin);
 
@@ -90,7 +100,6 @@ export default async function handler(req: NextRequest) {
     })
 
     const responseHeaders = new Headers(response.headers)
-    // Add CORS headers to the response
     corsHeaders.forEach((value, key) => {
       responseHeaders.set(key, value);
     });
