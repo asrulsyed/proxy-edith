@@ -26,21 +26,7 @@ function getCorsHeaders(origin: string | null): Headers {
   const headers = new Headers({
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': [
-      'Authorization',
-      'Content-Type',
-      'OpenAI-Beta',
-      'OpenAI-Organization',
-      'User-Agent', 
-      'Accept',             
-      'Origin',              
-      'Referer',            
-      'Client-Sdk',         
-      'X-Requested-With',    
-      'x-stainless-arch', // Add your custom header (if needed)
-      'x-stainless-lang',
-      'x-stainless-os',
-    ].join(', ')
+    'Access-Control-Allow-Headers': '*' // Allow any header
   });
 
   if (origin) {
