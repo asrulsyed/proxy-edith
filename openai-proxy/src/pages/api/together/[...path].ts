@@ -1,136 +1,138 @@
-import { NextRequest } from 'next/server'
+// api/together/[...path].ts (Your Edge Function)
+
+import { NextRequest } from 'next/server';
 
 export const config = {
   runtime: 'edge',
-}
+};
 
-const MISTRAL_BASE_URL = 'https://api.together.xyz/v1'
-const RATE_LIMIT_DURATION = 10000
+const TARGET_BASE_URL = process.env.TARGET_BASE_URL_to || 'https:aaaa';
+const API_KEY = process.env.API_KEY_to;
+const RATE_LIMIT_DURATION = 10000; // 10 seconds in milliseconds
 
-const ipLastRequestMap = new Map<string, number>()
+// Using a Map to store the last request time for each IP
+const ipLastRequestMap = new Map<string, number>();
 
 async function waitForCooldown(ip: string): Promise<void> {
-  const lastRequestTime = ipLastRequestMap.get(ip) || 0
-  const currentTime = Date.now()
-  const timeElapsed = currentTime - lastRequestTime
+  const lastRequestTime = ipLastRequestMap.get(ip) || 0;
+  const currentTime = Date.now();
+  const timeElapsed = currentTime - lastRequestTime;
 
   if (timeElapsed < RATE_LIMIT_DURATION) {
-    const waitTime = RATE_LIMIT_DURATION - timeElapsed
-    await new Promise(resolve => setTimeout(resolve, waitTime))
+    const waitTime = RATE_LIMIT_DURATION - timeElapsed;
+    await new Promise((resolve) => setTimeout(resolve, waitTime));
   }
 
-  ipLastRequestMap.set(ip, Date.now())
-}
-
-function getCorsHeaders(origin: string | null): Headers {
-  const headers = new Headers({
-    'Access-Control-Allow-Credentials': 'true',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': '*' // Allow any header
-  });
-
-  if (origin) {
-    headers.set('Access-Control-Allow-Origin', origin); // Allow your Ionic app's origin
-  } else {
-    headers.set('Access-Control-Allow-Origin', '*'); // Allow all origins (less secure - uncomment only for development if needed)
-    // It's safer to specify the origin(s) you want to allow during production
-  }
-
-  return headers;
+  ipLastRequestMap.set(ip, Date.now());
 }
 
 export default async function handler(req: NextRequest) {
-  const origin = req.headers.get('origin');
-  const corsHeaders = getCorsHeaders(origin);
-
-  // Handle preflight requests
-  if (req.method === 'OPTIONS') {
-    return new Response(null, {
-      status: 204,
-      headers: corsHeaders,
-    });
-  }
-
   try {
-    const clientIP = req.headers.get('x-forwarded-for') || 'unknown-ip'
-    await waitForCooldown(clientIP)
+    // Get the client's IP address
+    const clientIP = req.headers.get('x-forwarded-for') || 'unknown-ip';
 
-    const url = new URL(req.url)
-    const path = url.pathname.split('/api/together/')[1]
-    const targetUrl = `${MISTRAL_BASE_URL}/${path}`
+    // Wait for the cooldown period if necessary
+    await waitForCooldown(clientIP);
 
-    const headers = new Headers(req.headers)
+    const path = req.url.split('/api/together/')[1];
+    const targetUrl = `${TARGET_BASE_URL}/${path}`;
 
-    const apiKey = process.env.API_KEY_to
-    if (!apiKey) {
-      return new Response(
-        JSON.stringify({ error: 'API key is required' }),
-        {
-          status: 401,
-          headers: {
-            ...Object.fromEntries(corsHeaders),
-            'Content-Type': 'application/json',
-          },
-        }
-      )
-    }
+    // Clone the request headers
+    const headers = new Headers(req.headers);
 
-    headers.set('Authorization', `Bearer ${apiKey}`)
-    headers.set('Host', 'api.together.xyz')
-    headers.set('Content-Type', 'application/json')
+    // Update or add necessary headers
+    headers.set('Authorization', `Bearer ${API_KEY}`);
+    headers.set('Host', new URL(TARGET_BASE_URL).host);
+    headers.set('Content-Type', 'application/json'); // Important for tool calls
 
-    headers.delete('connection')
-    headers.delete('transfer-encoding')
+    // Remove any headers that might cause issues
+    headers.delete('connection');
+    headers.delete('transfer-encoding');
 
+    // Forward the request to the target server 
     const response = await fetch(targetUrl, {
       method: req.method,
       headers: headers,
-      body: req.body,
-    })
-
-    const responseHeaders = new Headers(response.headers)
-    corsHeaders.forEach((value, key) => {
-      responseHeaders.set(key, value);
+      body: req.body, // Forward the body as-is
     });
 
-    responseHeaders.delete('transfer-encoding')
-    responseHeaders.delete('connection')
+    // Prepare response headers with CORS handling
+    const responseHeaders = new Headers(response.headers);
+    responseHeaders.delete('transfer-encoding');
+    responseHeaders.delete('connection');
 
-    const isStreaming = response.headers.get('content-type')?.includes('stream')
+    // Dynamic Origin Handling (Important for individual users)
+    const origin = req.headers.get('origin');
+    if (origin) {
+      responseHeaders.set('Access-Control-Allow-Origin', origin);
+    } else {
+      // Handle cases where origin is missing (e.g., server-side scripts)
+      // You can either set a default allowed origin or use '*' with caution
+      responseHeaders.set('Access-Control-Allow-Origin', '*'); // Less secure, use carefully
+    }
 
+    // Other CORS headers (for non-simple requests)
+    responseHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    responseHeaders.set(
+      'Access-Control-Allow-Headers',
+      req.headers.get('access-control-request-headers') || '*',
+    );
+
+    // Credentials (if needed)
+    // If sending cookies or authentication headers, uncomment the next line:
+    // responseHeaders.set('Access-Control-Allow-Credentials', 'true'); 
+
+    // Handle preflight requests (OPTIONS)
+    if (req.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204, // No Content
+        headers: responseHeaders,
+      });
+    }
+
+    // If the response is streaming, we need to handle it differently
+    const isStreaming = response.headers.get('content-type')?.includes('stream');
     if (isStreaming) {
+      // For streaming responses, create a TransformStream to process chunks
       const transformStream = new TransformStream({
         transform(chunk, controller) {
-          controller.enqueue(chunk)
+          controller.enqueue(chunk);
         },
-      })
+      });
 
-      const streamedResponse = response.body?.pipeThrough(transformStream)
+      // Pipe the response body through our transform stream
+      const streamedResponse = response.body?.pipeThrough(transformStream);
       if (!streamedResponse) {
-        throw new Error('No response body')
+        throw new Error('No response body');
       }
 
+      // Return a streaming response
       return new Response(streamedResponse, {
         status: response.status,
         headers: responseHeaders,
-      })
+      });
     }
 
+    // For non-streaming responses, forward as-is
     return new Response(response.body, {
       status: response.status,
       headers: responseHeaders,
-    })
+    });
   } catch (error) {
-    console.error('Proxy error:', error)
+    console.error('Proxy error:', error);
     return new Response(
       JSON.stringify({ error: 'Internal Server Error' }),
       {
         status: 500,
         headers: {
-          ...Object.fromEntries(corsHeaders),
           'Content-Type': 'application/json',
+          // Include CORS headers in error responses as well
+          'Access-Control-Allow-Origin': req.headers.get('origin') || '*',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': req.headers.get('access-control-request-headers') || '*',
+          // 'Access-Control-Allow-Credentials': 'true', // Uncomment if needed
         },
-      }
-    )
+      },
+    );
   }
 }
