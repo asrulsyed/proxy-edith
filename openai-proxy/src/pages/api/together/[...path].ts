@@ -25,23 +25,28 @@ async function waitForCooldown(ip: string): Promise<void> {
 
 function setCORSHeaders(req: NextRequest, headers: Headers) {
   const origin = req.headers.get('origin');
-  headers.set('Access-Control-Allow-Origin', origin || '*');
+  if (origin) {
+    headers.set('Access-Control-Allow-Origin', origin);
+  } else {
+    headers.set('Access-Control-Allow-Origin', '*');
+  }
   headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  headers.set('Access-Control-Allow-Headers', '*');
   headers.set('Access-Control-Allow-Credentials', 'true');
+  headers.set('Access-Control-Max-Age', '86400'); // 24 hours
 }
 
 export default async function handler(req: NextRequest) {
+  // Handle preflight requests immediately
+  if (req.method === 'OPTIONS') {
+    const headers = new Headers();
+    setCORSHeaders(req, headers);
+    return new Response(null, { status: 204, headers });
+  }
+
   try {
     const clientIP = req.headers.get('x-forwarded-for') || 'unknown-ip';
     await waitForCooldown(clientIP);
-
-    // Handle preflight requests
-    if (req.method === 'OPTIONS') {
-      const headers = new Headers();
-      setCORSHeaders(req, headers);
-      return new Response(null, { status: 204, headers });
-    }
 
     const path = req.url.split('/api/together/')[1];
     const targetUrl = `${TARGET_BASE_URL}/${path}`;
