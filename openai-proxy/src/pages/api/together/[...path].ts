@@ -4,11 +4,9 @@ export const config = {
   runtime: 'edge',
 }
 
-const TARGET_BASE_URL = process.env.TARGET_BASE_URL_to || 'https:aaaa'
-const API_KEY = process.env.API_KEY_to
-const RATE_LIMIT_DURATION = 10000 // 10 seconds in milliseconds
+const MISTRAL_BASE_URL = 'https://api.together.xyz/v1'
+const RATE_LIMIT_DURATION = 1000
 
-// Using a Map to store the last request time for each IP
 const ipLastRequestMap = new Map<string, number>()
 
 async function waitForCooldown(ip: string): Promise<void> {
@@ -24,80 +22,100 @@ async function waitForCooldown(ip: string): Promise<void> {
   ipLastRequestMap.set(ip, Date.now())
 }
 
-export default async function handler(req: NextRequest) {
-  try {
-    // Get the client's IP address
-    const clientIP = req.headers.get('x-forwarded-for') || 'unknown-ip'
+function getCorsHeaders(origin: string | null): Headers {
+  const headers = new Headers({
+    'Access-Control-Allow-Credentials': 'true',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': '*' // Allow any header
+  });
 
-    // Wait for the cooldown period if necessary
+  if (origin) {
+    headers.set('Access-Control-Allow-Origin', origin); // Allow your Ionic app's origin
+  } else {
+    headers.set('Access-Control-Allow-Origin', '*'); // Allow all origins (less secure - uncomment only for development if needed)
+    // It's safer to specify the origin(s) you want to allow during production
+  }
+
+  return headers;
+}
+
+export default async function handler(req: NextRequest) {
+  const origin = req.headers.get('origin');
+  const corsHeaders = getCorsHeaders(origin);
+
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders,
+    });
+  }
+
+  try {
+    const clientIP = req.headers.get('x-forwarded-for') || 'unknown-ip'
     await waitForCooldown(clientIP)
 
-    const path = req.url.split('/api/together/')[1]
-    const targetUrl = `${TARGET_BASE_URL}/${path}`
+    const url = new URL(req.url)
+    const path = url.pathname.split('/api/together/')[1]
+    const targetUrl = `${MISTRAL_BASE_URL}/${path}`
 
-    // Clone the request headers
     const headers = new Headers(req.headers)
 
-    // Update or add necessary headers
-    headers.set('Authorization', `Bearer ${API_KEY}`)
-    headers.set('Host', new URL(TARGET_BASE_URL).host)
-    headers.set('Content-Type', 'application/json') // Important for tool calls
+    const apiKey = process.env.API_KEY_to
+    if (!apiKey) {
+      return new Response(
+        JSON.stringify({ error: 'API key is required' }),
+        {
+          status: 401,
+          headers: {
+            ...Object.fromEntries(corsHeaders),
+            'Content-Type': 'application/json',
+          },
+        }
+      )
+    }
 
-    // Remove any headers that might cause issues
+    headers.set('Authorization', `Bearer ${apiKey}`)
+    headers.set('Host', 'api.together.xyz')
+    headers.set('Content-Type', 'application/json')
+
     headers.delete('connection')
     headers.delete('transfer-encoding')
 
-    // Forward the request to Cerebras
     const response = await fetch(targetUrl, {
       method: req.method,
       headers: headers,
-      body: req.body, // Forward the body as-is
+      body: req.body,
     })
 
-    // Prepare response headers
     const responseHeaders = new Headers(response.headers)
+    corsHeaders.forEach((value, key) => {
+      responseHeaders.set(key, value);
+    });
+
     responseHeaders.delete('transfer-encoding')
     responseHeaders.delete('connection')
 
-    // **Crucial for handling CORS:**
-    responseHeaders.set('Access-Control-Allow-Origin', req.headers.get('origin') || '*') 
-    responseHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-    responseHeaders.set('Access-Control-Allow-Headers', req.headers.get('access-control-request-headers') || '*')
-    responseHeaders.set('Access-Control-Allow-Credentials', 'true')
-
-    // Handle preflight requests (OPTIONS)
-    if (req.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204, // No Content
-        headers: responseHeaders,
-      })
-    }
-
-
-    // If the response is streaming, we need to handle it differently
     const isStreaming = response.headers.get('content-type')?.includes('stream')
+
     if (isStreaming) {
-      // For streaming responses, create a TransformStream to process chunks
       const transformStream = new TransformStream({
         transform(chunk, controller) {
           controller.enqueue(chunk)
         },
       })
 
-      // Pipe the response body through our transform stream
       const streamedResponse = response.body?.pipeThrough(transformStream)
       if (!streamedResponse) {
         throw new Error('No response body')
       }
 
-      // Return a streaming response
       return new Response(streamedResponse, {
         status: response.status,
         headers: responseHeaders,
       })
     }
 
-    // For non-streaming responses, forward as-is
     return new Response(response.body, {
       status: response.status,
       headers: responseHeaders,
@@ -109,11 +127,8 @@ export default async function handler(req: NextRequest) {
       {
         status: 500,
         headers: {
+          ...Object.fromEntries(corsHeaders),
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': req.headers.get('origin') || '*', // Include CORS headers in error responses
-          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': req.headers.get('access-control-request-headers') || '*',
-          'Access-Control-Allow-Credentials': 'true',
         },
       }
     )
