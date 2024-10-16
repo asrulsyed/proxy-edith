@@ -15,12 +15,12 @@ async function waitForCooldown(ip: string): Promise<void> {
   const lastRequestTime = ipLastRequestMap.get(ip) || 0
   const currentTime = Date.now()
   const timeElapsed = currentTime - lastRequestTime
-  
+
   if (timeElapsed < RATE_LIMIT_DURATION) {
     const waitTime = RATE_LIMIT_DURATION - timeElapsed
     await new Promise(resolve => setTimeout(resolve, waitTime))
   }
-  
+
   ipLastRequestMap.set(ip, Date.now())
 }
 
@@ -28,24 +28,21 @@ export default async function handler(req: NextRequest) {
   try {
     // Get the client's IP address
     const clientIP = req.headers.get('x-forwarded-for') || 'unknown-ip'
-    
+
     // Wait for the cooldown period if necessary
     await waitForCooldown(clientIP)
-    
+
     const path = req.url.split('/api/together/')[1]
     const targetUrl = `${TARGET_BASE_URL}/${path}`
 
     // Clone the request headers
     const headers = new Headers(req.headers)
-    
+
     // Update or add necessary headers
     headers.set('Authorization', `Bearer ${API_KEY}`)
     headers.set('Host', new URL(TARGET_BASE_URL).host)
     headers.set('Content-Type', 'application/json') // Important for tool calls
-    headers.set('Access-Control-Allow-Origin', '*')
-    headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-    headers.set('Access-Control-Allow-Credentials', 'true')
-    
+
     // Remove any headers that might cause issues
     headers.delete('connection')
     headers.delete('transfer-encoding')
@@ -61,6 +58,21 @@ export default async function handler(req: NextRequest) {
     const responseHeaders = new Headers(response.headers)
     responseHeaders.delete('transfer-encoding')
     responseHeaders.delete('connection')
+
+    // **Crucial for handling CORS:**
+    responseHeaders.set('Access-Control-Allow-Origin', req.headers.get('origin') || '*') 
+    responseHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+    responseHeaders.set('Access-Control-Allow-Headers', req.headers.get('access-control-request-headers') || '*')
+    responseHeaders.set('Access-Control-Allow-Credentials', 'true')
+
+    // Handle preflight requests (OPTIONS)
+    if (req.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204, // No Content
+        headers: responseHeaders,
+      })
+    }
+
 
     // If the response is streaming, we need to handle it differently
     const isStreaming = response.headers.get('content-type')?.includes('stream')
@@ -98,6 +110,10 @@ export default async function handler(req: NextRequest) {
         status: 500,
         headers: {
           'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': req.headers.get('origin') || '*', // Include CORS headers in error responses
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': req.headers.get('access-control-request-headers') || '*',
+          'Access-Control-Allow-Credentials': 'true',
         },
       }
     )
