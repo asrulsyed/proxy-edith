@@ -5,7 +5,7 @@ export const config = {
 }
 
 const MISTRAL_BASE_URL = 'https://api.together.xyz/v1'
-const RATE_LIMIT_DURATION = 1000
+const RATE_LIMIT_DURATION = 10000
 
 const ipLastRequestMap = new Map<string, number>()
 
