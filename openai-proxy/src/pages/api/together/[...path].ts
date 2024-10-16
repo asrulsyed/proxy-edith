@@ -43,6 +43,8 @@ export default async function handler(req: NextRequest) {
     headers.set('Host', new URL(TARGET_BASE_URL).host)
     headers.set('Content-Type', 'application/json') // Important for tool calls
     headers.set('Access-Control-Allow-Origin', '*')
+    headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+    headers.set('Access-Control-Allow-Credentials', 'true')
     
     // Remove any headers that might cause issues
     headers.delete('connection')
