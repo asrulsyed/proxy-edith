@@ -11,6 +11,7 @@ const RATE_LIMIT_DURATION = 1000 // 2 seconds in milliseconds
 const SUPABASE_URL = process.env.SUPABASE_URL || ""
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || ""
 
+
 // Supabase client
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
@@ -70,8 +71,12 @@ export default async function handler(req: NextRequest) {
       body: req.body, // Forward the body as-is
     })
 
-    // Prepare response headers
+    // Prepare response headers (Allow everything)
     const responseHeaders = new Headers(response.headers)
+    responseHeaders.set('Access-Control-Allow-Origin', '*')
+    responseHeaders.set('Access-Control-Allow-Methods', '*')
+    responseHeaders.set('Access-Control-Allow-Headers', '*')
+    responseHeaders.set('Access-Control-Allow-Credentials', 'true') 
     responseHeaders.delete('transfer-encoding')
     responseHeaders.delete('connection')
 
