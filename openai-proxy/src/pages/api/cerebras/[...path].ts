@@ -32,6 +32,12 @@ async function waitForCooldown(ip: string): Promise<void> {
 }
 
 export default async function handler(req: NextRequest) {
+  let requestBody = '';
+  let responseBody = '';
+  let responseStatus = 500;
+  let responseHeaders: Headers | undefined = undefined;
+  let targetUrl = ''; // Initialize targetUrl
+
   try {
     // Get the client's IP address
     const clientIP = req.headers.get('x-forwarded-for') || 'unknown-ip'
@@ -40,7 +46,7 @@ export default async function handler(req: NextRequest) {
     await waitForCooldown(clientIP)
 
     const path = req.url.split('/api/cerebras/')[1]
-    const targetUrl = `${TARGET_BASE_URL}/${path}`
+    targetUrl = `${TARGET_BASE_URL}/${path}` // Assign value to targetUrl
 
     // Clone the request headers
     const headers = new Headers(req.headers)
@@ -54,15 +60,18 @@ export default async function handler(req: NextRequest) {
     headers.delete('connection')
     headers.delete('transfer-encoding')
 
+    // Capture request body for logging
+    requestBody = await req.text();
+
     // Log request details to console
     console.log('Request:', {
       ip: clientIP,
       method: req.method,
       path: req.url,
+      targetUrl: targetUrl, // Log the target URL
       request_headers: Object.fromEntries(req.headers),
+      request_body: requestBody,
     })
-    const requestBody = await req.text() // Capture request body for logging
-    console.log('Request Body:', requestBody)
 
     // Forward the request to Cerebras
     const response = await fetch(targetUrl, {
@@ -72,7 +81,7 @@ export default async function handler(req: NextRequest) {
     })
 
     // Prepare response headers (Allow everything)
-    const responseHeaders = new Headers(response.headers)
+    responseHeaders = new Headers(response.headers)
     responseHeaders.set('Access-Control-Allow-Origin', '*')
     responseHeaders.set('Access-Control-Allow-Methods', '*')
     responseHeaders.set('Access-Control-Allow-Headers', '*')
@@ -80,26 +89,17 @@ export default async function handler(req: NextRequest) {
     responseHeaders.delete('transfer-encoding')
     responseHeaders.delete('connection')
 
+    // Capture response body for logging
+    responseBody = await response.text();
+
     // Log response details to console
     console.log('Response:', {
       response_status: response.status,
       response_headers: Object.fromEntries(response.headers),
+      response_body: responseBody, 
     })
-    const responseBody = await response.text() // Capture response body for logging
-    console.log('Response Body:', responseBody)
 
-    // Log to Supabase
-    await supabase.from('api_logs').insert({
-      ip: clientIP,
-      method: req.method,
-      path: req.url,
-      request_headers: Object.fromEntries(req.headers),
-      request_body: requestBody,
-      response_status: response.status,
-      response_headers: Object.fromEntries(response.headers),
-      response_body: responseBody,
-      timestamp: new Date().toISOString(),
-    })
+    responseStatus = response.status;
 
     // If the response is streaming, we need to handle it differently
     const isStreaming = response.headers.get('content-type')?.includes('stream')
@@ -129,26 +129,46 @@ export default async function handler(req: NextRequest) {
       status: response.status,
       headers: responseHeaders,
     })
-  } catch (error: unknown) { // Specify 'unknown' type
+
+  } catch (error: unknown) {
     console.error('Proxy error:', error)
 
-    // Type assertion (or use a type guard if needed)
-    const typedError = error as Error
+    // Ensure error is logged even if it's not an Error instance
+    const errorMessage = error instanceof Error ? error.message : String(error);
 
-    // Log error to Supabase
-    await supabase.from('api_logs').insert({
-      error: typedError.message,
-      timestamp: new Date().toISOString(),
-    })
+    // Log error to console
+    console.error('Error details:', errorMessage);
 
-    return new Response(
-      JSON.stringify({ error: 'Internal Server Error' }),
-      {
-        status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      }
-    )
+    responseBody = JSON.stringify({ error: 'Internal Server Error' });
+    responseStatus = 500;
+    responseHeaders = new Headers();
+    responseHeaders.set('Content-Type', 'application/json'); 
+  } finally {
+    // Log to Supabase regardless of success or failure 
+    try {
+      
+      await supabase.from('api_logs').insert({
+        ip: req.headers.get('x-forwarded-for') || 'unknown-ip',
+        method: req.method,
+        path: req.url,
+        targetUrl: targetUrl, // Include targetUrl in Supabase logs
+        request_headers: Object.fromEntries(req.headers),
+        request_body: requestBody,
+        response_status: responseStatus,
+        response_headers: responseHeaders ? Object.fromEntries(responseHeaders) : {},
+        response_body: responseBody,
+        timestamp: new Date().toISOString(),
+      })
+    } catch (supabaseError) {
+      console.error('Error logging to Supabase:', supabaseError)
+
+      // Throw a console error to make it more visible (optional - remove for production)
+      throw new Error(`Supabase logging failed: ${supabaseError}`);
+    }
   }
+
+  return new Response(responseBody, {
+    status: responseStatus,
+    headers: responseHeaders,
+  })
 }
