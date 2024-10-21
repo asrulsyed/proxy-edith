@@ -135,7 +135,7 @@ export default async function handler(req: NextRequest) {
         response_status: responseStatus,
         response_headers: responseHeaders ? Object.fromEntries(responseHeaders) : {},
         response_body: responseBody,
-        timestamp: new Date().toISOString(),
+        // timestamp: new Date().toISOString(),
       })
     } catch (supabaseError) {
       console.error('Error logging to Supabase:', supabaseError)
