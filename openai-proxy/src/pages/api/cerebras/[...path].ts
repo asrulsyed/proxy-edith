@@ -9,7 +9,7 @@ const TARGET_BASE_URL = process.env.TARGET_BASE_URL || 'https:aaaa'
 const API_KEY = process.env.API_KEY
 const RATE_LIMIT_DURATION = 1000 // 1 second in milliseconds
 const SUPABASE_URL = process.env.SUPABASE_URL || ""
-const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || ""
+const SUPABASE_KEY = process.env.SUPABASE_KEY || ""
 const ALLOWED_ORIGIN = 'chat.gaurish.xyz'
 
 // Supabase client
