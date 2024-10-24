@@ -10,7 +10,7 @@ const TARGET_BASE_URL = process.env.TARGET_BASE_URL || ""
 const API_KEY = process.env.API_KEY
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_KEY
-const ALLOWED_ORIGIN = 'chat.gaurish.xyz'
+const ALLOWED_ORIGIN = 'chat.gaurish.xyz, gaurish.xyz'
 const RATE_LIMIT_DURATION = 1000 // 1 second in milliseconds
 
 // Verify required environment variables
@@ -97,7 +97,7 @@ export default async function handler(req: NextRequest) {
     const referer = req.headers.get('referer')
     const host = origin || referer
 
-    if (!host?.includes(ALLOWED_ORIGIN)) {
+    if (!host?.includes('chat.gaurish.xyz') && !host?.includes('gaurish.xyz')) {
       responseStatus = 403
       responseBody = 'Stop Abusing the Api'
       
