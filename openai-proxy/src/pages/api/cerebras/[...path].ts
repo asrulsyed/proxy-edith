@@ -12,7 +12,7 @@ const API_KEY = process.env.API_KEY
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_KEY
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || ""
 const ALLOWED_ORIGIN = 'chat.gaurish.xyz, gaurish.xyz'
 const RATE_LIMIT_DURATION = 1000 // 1 second in milliseconds
 
@@ -209,7 +209,7 @@ export default async function handler(req: NextRequest) {
       requestCountData.firstRequestTime = currentTime
     }
 
-    if (requestCountData.count > 10) {
+    if (requestCountData.count > 2) {
       await notifyAdmin(clientIP)
     }
 
