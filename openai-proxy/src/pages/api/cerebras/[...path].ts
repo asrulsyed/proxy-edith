@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { Telegraf } from 'telegraf'
 
 export const config = {
   runtime: 'edge',
@@ -10,6 +11,8 @@ const TARGET_BASE_URL = process.env.TARGET_BASE_URL || ""
 const API_KEY = process.env.API_KEY
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_KEY
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID
 const ALLOWED_ORIGIN = 'chat.gaurish.xyz, gaurish.xyz'
 const RATE_LIMIT_DURATION = 1000 // 1 second in milliseconds
 
@@ -18,6 +21,8 @@ if (!TARGET_BASE_URL) throw new Error('TARGET_BASE_URL is required')
 if (!API_KEY) throw new Error('API_KEY is required')
 if (!SUPABASE_URL) throw new Error('SUPABASE_URL is required')
 if (!SUPABASE_SERVICE_KEY) throw new Error('SUPABASE_SERVICE_KEY is required')
+if (!TELEGRAM_BOT_TOKEN) throw new Error('TELEGRAM_BOT_TOKEN is required')
+if (!TELEGRAM_CHAT_ID) throw new Error('TELEGRAM_CHAT_ID is required')
 
 // Types for logging
 interface LogEntry {
@@ -37,6 +42,9 @@ interface LogEntry {
 // Initialize Supabase with service role key
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
+// Initialize Telegraf bot
+const bot = new Telegraf(TELEGRAM_BOT_TOKEN)
+
 // Rate limiting map
 const ipLastRequestMap = new Map<string, number>()
 const ipRequestCountMap = new Map<string, { count: number, firstRequestTime: number }>()
@@ -48,8 +56,11 @@ function isBannedIP(ip: string): boolean {
 }
 
 async function notifyAdmin(ip: string): Promise<void> {
-  // Implement your notification logic here
-  console.log(`Admin notification: IP ${ip} has exceeded the request limit.`)
+  try {
+    await bot.telegram.sendMessage(TELEGRAM_CHAT_ID, `Admin notification: IP ${ip} has exceeded the request limit.`)
+  } catch (error) {
+    console.error('Failed to send Telegram message:', error)
+  }
 }
 
 async function waitForCooldown(ip: string): Promise<void> {
