@@ -8,6 +8,18 @@ const MISTRAL_BASE_URL = 'https://api.mistral.ai/v1'
 const RATE_LIMIT_DURATION = 1000
 
 const ipLastRequestMap = new Map<string, number>()
+const ipRequestCountMap = new Map<string, { count: number, firstRequestTime: number }>()
+
+const BANNED_IPS = ['194.191.253.202']
+
+function isBannedIP(ip: string): boolean {
+  return BANNED_IPS.includes(ip)
+}
+
+async function notifyAdmin(ip: string): Promise<void> {
+  // Implement your notification logic here
+  console.log(`Admin notification: IP ${ip} has exceeded the request limit.`)
+}
 
 async function waitForCooldown(ip: string): Promise<void> {
   const lastRequestTime = ipLastRequestMap.get(ip) || 0
@@ -53,7 +65,33 @@ export default async function handler(req: NextRequest) {
 
   try {
     const clientIP = req.headers.get('x-forwarded-for') || 'unknown-ip'
+
+    // Check if IP is banned
+    if (isBannedIP(clientIP)) {
+      return new Response('Your IP is banned from accessing this service.', {
+        status: 403,
+        headers: corsHeaders,
+      })
+    }
+
     await waitForCooldown(clientIP)
+
+    // Track request count
+    const currentTime = Date.now()
+    const requestCountData = ipRequestCountMap.get(clientIP) || { count: 0, firstRequestTime: currentTime }
+    requestCountData.count += 1
+
+    if (currentTime - requestCountData.firstRequestTime > 5 * 60 * 1000) {
+      // Reset count if more than 5 minutes have passed
+      requestCountData.count = 1
+      requestCountData.firstRequestTime = currentTime
+    }
+
+    if (requestCountData.count > 10) {
+      await notifyAdmin(clientIP)
+    }
+
+    ipRequestCountMap.set(clientIP, requestCountData)
 
     const url = new URL(req.url)
     const path = url.pathname.split('/api/mistral/')[1]
