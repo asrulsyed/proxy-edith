@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { Bot } from 'grammy'
 
 export const config = {
   runtime: 'edge',
@@ -10,16 +11,23 @@ const TARGET_BASE_URL = process.env.TARGET_BASE_URL || ""
 const API_KEY = process.env.API_KEY
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_KEY
-const ALLOWED_ORIGIN = 'chat.gaurish.xyz, gaurish.xyz'
-const RATE_LIMIT_DURATION = 1000 // 1 second in milliseconds
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || ""
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || ""
+const MONITORING_PERIOD = 10 * 60 * 1000 // 10 minutes
+const REQUEST_THRESHOLD = 2 // Notify after 2 requests
+
+// Initialize Telegram bot
+const bot = new Bot(TELEGRAM_BOT_TOKEN)
 
 // Verify required environment variables
 if (!TARGET_BASE_URL) throw new Error('TARGET_BASE_URL is required')
 if (!API_KEY) throw new Error('API_KEY is required')
 if (!SUPABASE_URL) throw new Error('SUPABASE_URL is required')
 if (!SUPABASE_SERVICE_KEY) throw new Error('SUPABASE_SERVICE_KEY is required')
+if (!TELEGRAM_BOT_TOKEN) throw new Error('TELEGRAM_BOT_TOKEN is required')
+if (!TELEGRAM_CHAT_ID) throw new Error('TELEGRAM_CHAT_ID is required')
 
-// Types for logging
+// Types
 interface LogEntry {
   ip: string
   method: string
@@ -34,22 +42,46 @@ interface LogEntry {
   duration_ms: number
 }
 
-// Initialize Supabase with service role key
+interface RequestTracker {
+  count: number
+  firstRequestTime: number
+  lastNotificationTime?: number
+}
+
+// Initialize Supabase
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-// Rate limiting map
+// In-memory storage
 const ipLastRequestMap = new Map<string, number>()
-const ipRequestCountMap = new Map<string, { count: number, firstRequestTime: number }>()
-
+const ipRequestCountMap = new Map<string, RequestTracker>()
 const BANNED_IPS = ['194.191.253.202']
+const RATE_LIMIT_DURATION = 1000 // 1 second
 
+// Helper functions
 function isBannedIP(ip: string): boolean {
   return BANNED_IPS.includes(ip)
 }
 
-async function notifyAdmin(ip: string): Promise<void> {
-  // Implement your notification logic here
-  console.log(`Admin notification: IP ${ip} has exceeded the request limit.`)
+async function notifyAdmin(ip: string, requestTracker: RequestTracker): Promise<void> {
+  const currentTime = Date.now()
+  const lastNotificationTime = requestTracker.lastNotificationTime || 0
+
+  // Only send notification if we haven't sent one in the last monitoring period
+  if (currentTime - lastNotificationTime >= MONITORING_PERIOD) {
+    try {
+      const message = `🚨 High Traffic Alert!
+IP Address: ${ip}
+Request Count: ${requestTracker.count} requests
+Time Window: Last 10 minutes
+First Request: ${new Date(requestTracker.firstRequestTime).toISOString()}
+Current Time: ${new Date().toISOString()}`
+
+      await bot.api.sendMessage(TELEGRAM_CHAT_ID, message)
+      requestTracker.lastNotificationTime = currentTime
+    } catch (error) {
+      console.error('Failed to send Telegram notification:', error)
+    }
+  }
 }
 
 async function waitForCooldown(ip: string): Promise<void> {
@@ -95,7 +127,7 @@ export default async function handler(req: NextRequest) {
   const startTime = Date.now()
   const clientIP = req.headers.get('x-forwarded-for') || 'unknown-ip'
   
-  // Initialize variables for logging
+  // Initialize logging variables
   let requestBody = ''
   let responseBody = ''
   let responseStatus = 500
@@ -111,7 +143,7 @@ export default async function handler(req: NextRequest) {
 
     if (!host?.includes('chat.gaurish.xyz') && !host?.includes('gaurish.xyz')) {
       responseStatus = 403
-      responseBody = 'Stop Abusing the Api'
+      responseBody = 'Unauthorized Origin'
       
       await logToSupabase({
         ip: clientIP,
@@ -171,22 +203,27 @@ export default async function handler(req: NextRequest) {
     // Rate limiting
     await waitForCooldown(clientIP)
 
-    // Track request count
+    // Track and monitor requests
     const currentTime = Date.now()
-    const requestCountData = ipRequestCountMap.get(clientIP) || { count: 0, firstRequestTime: currentTime }
-    requestCountData.count += 1
-
-    if (currentTime - requestCountData.firstRequestTime > 5 * 60 * 1000) {
-      // Reset count if more than 5 minutes have passed
-      requestCountData.count = 1
-      requestCountData.firstRequestTime = currentTime
+    const requestTracker = ipRequestCountMap.get(clientIP) || {
+      count: 0,
+      firstRequestTime: currentTime
     }
 
-    if (requestCountData.count > 10) {
-      await notifyAdmin(clientIP)
+    // Reset counter if monitoring period has passed
+    if (currentTime - requestTracker.firstRequestTime > MONITORING_PERIOD) {
+      requestTracker.count = 1
+      requestTracker.firstRequestTime = currentTime
+    } else {
+      requestTracker.count++
     }
 
-    ipRequestCountMap.set(clientIP, requestCountData)
+    // Check if threshold is exceeded
+    if (requestTracker.count > REQUEST_THRESHOLD) {
+      await notifyAdmin(clientIP, requestTracker)
+    }
+
+    ipRequestCountMap.set(clientIP, requestTracker)
 
     // Prepare request
     const path = req.url.split('/api/cerebras/')[1]
