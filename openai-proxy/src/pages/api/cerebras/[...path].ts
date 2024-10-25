@@ -106,14 +106,15 @@ function getCorsHeaders(origin: string | null): Headers {
   const headers = new Headers({
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Origin': "*"
   });
 
-  if (origin) {
-    headers.set('Access-Control-Allow-Origin', origin);
-  } else {
-    headers.set('Access-Control-Allow-Origin', 'chat.gaurish.xyz, gaurish.xyz');
-  }
+  // if (origin) {
+  //   headers.set('Access-Control-Allow-Origin', origin);
+  // } else {
+  //   headers.set('Access-Control-Allow-Origin', 'chat.gaurish.xyz, gaurish.xyz');
+  // }
 
   return headers;
 }
