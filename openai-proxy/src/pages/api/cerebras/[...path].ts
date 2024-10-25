@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { Bot } from 'grammy'
+import { IP2Location } from 'ip2location-nodejs'
 
 export const config = {
   runtime: 'edge',
@@ -13,11 +14,11 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_KEY
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || ""
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || ""
-const MONITORING_PERIOD = 10 * 60 * 1000 // 10 minutes
-const REQUEST_THRESHOLD = 2 // Notify after 2 requests
 
-// Initialize Telegram bot
+// Initialize services
 const bot = new Bot(TELEGRAM_BOT_TOKEN)
+const ip2location = new IP2Location()
+ip2location.open("./IP2LOCATION-LITE-DB1.BIN")
 
 // Verify required environment variables
 if (!TARGET_BASE_URL) throw new Error('TARGET_BASE_URL is required')
@@ -40,80 +41,64 @@ interface LogEntry {
   response_body: string
   error?: string
   duration_ms: number
-}
-
-interface RequestTracker {
-  count: number
-  firstRequestTime: number
-  lastNotificationTime?: number
+  country?: string
 }
 
 // Initialize Supabase
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-// In-memory storage
-const ipLastRequestMap = new Map<string, number>()
-const ipRequestCountMap = new Map<string, RequestTracker>()
 const BANNED_IPS = ['194.191.253.202']
-const RATE_LIMIT_DURATION = 1000 // 1 second
+// Rate limiting map
+const requestTimes = new Map<string, number>()
 
-// Helper functions
 function isBannedIP(ip: string): boolean {
   return BANNED_IPS.includes(ip)
 }
 
-async function notifyAdmin(ip: string, requestTracker: RequestTracker): Promise<void> {
-  const currentTime = Date.now()
-  const lastNotificationTime = requestTracker.lastNotificationTime || 0
+function isRateLimited(ip: string): boolean {
+  const now = Date.now()
+  const lastRequest = requestTimes.get(ip) || 0
+  
+  if (now - lastRequest < 1000) { // 1 second rate limit
+    return true
+  }
+  
+  requestTimes.set(ip, now)
+  return false
+}
 
-  // Only send notification if we haven't sent one in the last monitoring period
-  if (currentTime - lastNotificationTime >= MONITORING_PERIOD) {
-    try {
-      const message = `🚨 High Traffic Alert!
-IP Address: ${ip}
-Request Count: ${requestTracker.count} requests
-Time Window: Last 10 minutes
-First Request: ${new Date(requestTracker.firstRequestTime).toISOString()}
-Current Time: ${new Date().toISOString()}`
-
-      await bot.api.sendMessage(TELEGRAM_CHAT_ID, message)
-      requestTracker.lastNotificationTime = currentTime
-    } catch (error) {
-      console.error('Failed to send Telegram notification:', error)
-    }
+async function getCountryFromIP(ip: string): Promise<string> {
+  try {
+    const result = await ip2location.getAll(ip)
+    return result.countryShort || 'Unknown'
+  } catch (error) {
+    console.error('Geolocation error:', error)
+    return 'Unknown'
   }
 }
 
-async function waitForCooldown(ip: string): Promise<void> {
-  const lastRequestTime = ipLastRequestMap.get(ip) || 0
-  const currentTime = Date.now()
-  const timeElapsed = currentTime - lastRequestTime
+async function notifyAdmin(ip: string, country: string, method: string, path: string): Promise<void> {
+  try {
+    const message = `🌐 New Request Alert!
+IP: ${ip}
+Country: ${country}
+Method: ${method}
+Path: ${path}
+Time: ${new Date().toISOString()}`
 
-  if (timeElapsed < RATE_LIMIT_DURATION) {
-    const waitTime = RATE_LIMIT_DURATION - timeElapsed
-    await new Promise(resolve => setTimeout(resolve, waitTime))
+    // Fire and forget - don't await
+    bot.api.sendMessage(TELEGRAM_CHAT_ID, message)
+      .catch(error => console.error('Telegram notification error:', error))
+  } catch (error) {
+    console.error('Failed to send Telegram notification:', error)
   }
-
-  ipLastRequestMap.set(ip, Date.now())
 }
 
 async function logToSupabase(data: LogEntry): Promise<void> {
   try {
     const { error } = await supabase
       .from('api_logs')
-      .insert([{
-        ip: data.ip,
-        method: data.method,
-        path: data.path,
-        target_url: data.target_url,
-        request_headers: data.request_headers,
-        request_body: data.request_body,
-        response_status: data.response_status,
-        response_headers: data.response_headers,
-        response_body: data.response_body,
-        error: data.error,
-        duration_ms: data.duration_ms
-      }])
+      .insert([data])
 
     if (error) {
       console.error('Supabase logging error:', error)
@@ -123,18 +108,55 @@ async function logToSupabase(data: LogEntry): Promise<void> {
   }
 }
 
+async function handleError(
+  req: NextRequest,
+  clientIP: string,
+  country: string,
+  startTime: number,
+  status: number,
+  errorMessage: string,
+  targetUrl = ''
+): Promise<Response> {
+  const responseBody = JSON.stringify({ error: errorMessage })
+  const responseHeaders = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': '*',
+    'Access-Control-Allow-Headers': '*'
+  }
+
+  // Fire and forget notification
+  notifyAdmin(clientIP, country, req.method, req.url)
+  
+  // Fire and forget logging
+  logToSupabase({
+    ip: clientIP,
+    method: req.method,
+    path: req.url,
+    target_url: targetUrl,
+    request_headers: Object.fromEntries(req.headers),
+    request_body: '',
+    response_status: status,
+    response_headers: responseHeaders,
+    response_body: responseBody,
+    error: errorMessage,
+    duration_ms: Date.now() - startTime,
+    country
+  })
+
+  return new Response(responseBody, {
+    status,
+    headers: responseHeaders
+  })
+}
+
 export default async function handler(req: NextRequest) {
   const startTime = Date.now()
-  const clientIP = req.headers.get('x-forwarded-for') || 'unknown-ip'
+  const clientIP = req.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown-ip'
   
-  // Initialize logging variables
-  let requestBody = ''
-  let responseBody = ''
-  let responseStatus = 500
-  let responseHeaders: Record<string, string> = {}
-  let targetUrl = ''
-  let error: string | undefined
-
+  // Start geolocation lookup early
+  const countryPromise = getCountryFromIP(clientIP)
+  
   try {
     // Origin check
     const origin = req.headers.get('origin')
@@ -142,88 +164,29 @@ export default async function handler(req: NextRequest) {
     const host = origin || referer
 
     if (!host?.includes('chat.gaurish.xyz') && !host?.includes('gaurish.xyz')) {
-      responseStatus = 403
-      responseBody = 'Unauthorized Origin'
-      
-      await logToSupabase({
-        ip: clientIP,
-        method: req.method,
-        path: req.url,
-        target_url: '',
-        request_headers: Object.fromEntries(req.headers),
-        request_body: '',
-        response_status: responseStatus,
-        response_headers: {},
-        response_body: responseBody,
-        error: 'Unauthorized origin',
-        duration_ms: Date.now() - startTime
-      })
-
-      return new Response(responseBody, {
-        status: responseStatus,
-        headers: {
-          'Content-Type': 'text/plain',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': '*',
-          'Access-Control-Allow-Headers': '*'
-        }
-      })
+      const country = await countryPromise
+      return handleError(req, clientIP, country, startTime, 403, 'Unauthorized Origin')
     }
 
     // Check if IP is banned
     if (isBannedIP(clientIP)) {
-      responseStatus = 403
-      responseBody = 'Your IP is banned from accessing this service.'
-      
-      await logToSupabase({
-        ip: clientIP,
-        method: req.method,
-        path: req.url,
-        target_url: '',
-        request_headers: Object.fromEntries(req.headers),
-        request_body: '',
-        response_status: responseStatus,
-        response_headers: {},
-        response_body: responseBody,
-        error: 'Banned IP',
-        duration_ms: Date.now() - startTime
-      })
-
-      return new Response(responseBody, {
-        status: responseStatus,
-        headers: {
-          'Content-Type': 'text/plain',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': '*',
-          'Access-Control-Allow-Headers': '*'
-        }
-      })
+      const country = await countryPromise
+      return handleError(req, clientIP, country, startTime, 403, 'Your IP is banned from accessing this service')
     }
 
-    // Rate limiting
-    await waitForCooldown(clientIP)
-
-    // Track and monitor requests
-    const currentTime = Date.now()
-    const requestTracker = ipRequestCountMap.get(clientIP) || {
-      count: 0,
-      firstRequestTime: currentTime
+    // Check rate limit
+    if (isRateLimited(clientIP)) {
+      const country = await countryPromise
+      return handleError(req, clientIP, country, startTime, 429, 'Too Many Requests')
     }
 
-    // Reset counter if monitoring period has passed
-    if (currentTime - requestTracker.firstRequestTime > MONITORING_PERIOD) {
-      requestTracker.count = 1
-      requestTracker.firstRequestTime = currentTime
-    } else {
-      requestTracker.count++
-    }
-
-    // Check if threshold is exceeded
-    if (requestTracker.count > REQUEST_THRESHOLD) {
-      await notifyAdmin(clientIP, requestTracker)
-    }
-
-    ipRequestCountMap.set(clientIP, requestTracker)
+    // Initialize logging variables
+    let requestBody = ''
+    let responseBody = ''
+    let responseStatus = 500
+    let responseHeaders: Record<string, string> = {}
+    let targetUrl = ''
+    let error: string | undefined
 
     // Prepare request
     const path = req.url.split('/api/cerebras/')[1]
@@ -261,6 +224,11 @@ export default async function handler(req: NextRequest) {
     responseStatus = response.status
     responseHeaders = Object.fromEntries(outgoingHeaders)
 
+    // Get country before handling response
+    const country = await countryPromise
+    // Fire and forget notification for every request
+    notifyAdmin(clientIP, country, req.method, req.url)
+
     // Handle streaming responses
     const isStreaming = response.headers.get('content-type')?.includes('stream')
     if (isStreaming) {
@@ -269,8 +237,8 @@ export default async function handler(req: NextRequest) {
         throw new Error('No response body')
       }
 
-      // Log streaming request
-      await logToSupabase({
+      // Fire and forget logging
+      logToSupabase({
         ip: clientIP,
         method: req.method,
         path: req.url,
@@ -280,7 +248,8 @@ export default async function handler(req: NextRequest) {
         response_status: responseStatus,
         response_headers: responseHeaders,
         response_body: '[Streaming Response]',
-        duration_ms: Date.now() - startTime
+        duration_ms: Date.now() - startTime,
+        country
       })
 
       return new Response(streamedResponse, {
@@ -292,8 +261,8 @@ export default async function handler(req: NextRequest) {
     // Handle regular responses
     responseBody = await response.text()
     
-    // Log regular request
-    await logToSupabase({
+    // Fire and forget logging
+    logToSupabase({
       ip: clientIP,
       method: req.method,
       path: req.url,
@@ -303,7 +272,8 @@ export default async function handler(req: NextRequest) {
       response_status: responseStatus,
       response_headers: responseHeaders,
       response_body: responseBody,
-      duration_ms: Date.now() - startTime
+      duration_ms: Date.now() - startTime,
+      country
     })
 
     return new Response(responseBody, {
@@ -312,36 +282,10 @@ export default async function handler(req: NextRequest) {
     })
 
   } catch (e) {
-    error = e instanceof Error ? e.message : 'Unknown error'
+    const error = e instanceof Error ? e.message : 'Unknown error'
     console.error('Proxy error:', error)
     
-    responseStatus = 500
-    responseBody = JSON.stringify({ error: 'Internal Server Error' })
-    responseHeaders = {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': '*',
-      'Access-Control-Allow-Headers': '*'
-    }
-
-    // Log error
-    await logToSupabase({
-      ip: clientIP,
-      method: req.method,
-      path: req.url,
-      target_url: targetUrl,
-      request_headers: Object.fromEntries(req.headers),
-      request_body: requestBody,
-      response_status: responseStatus,
-      response_headers: responseHeaders,
-      response_body: responseBody,
-      error: error,
-      duration_ms: Date.now() - startTime
-    })
-
-    return new Response(responseBody, {
-      status: responseStatus,
-      headers: responseHeaders
-    })
+    const country = await countryPromise
+    return handleError(req, clientIP, country, startTime, 500, 'Internal Server Error')
   }
 }
