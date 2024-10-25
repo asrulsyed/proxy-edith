@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { Bot } from 'grammy'
-import { IP2Location } from 'ip2location-nodejs'
+
 
 export const config = {
   runtime: 'edge',
@@ -17,8 +17,7 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || ""
 
 // Initialize services
 const bot = new Bot(TELEGRAM_BOT_TOKEN)
-const ip2location = new IP2Location()
-ip2location.open("./IP2LOCATION-LITE-DB1.BIN")
+
 
 // Verify required environment variables
 if (!TARGET_BASE_URL) throw new Error('TARGET_BASE_URL is required')
@@ -67,21 +66,11 @@ function isRateLimited(ip: string): boolean {
   return false
 }
 
-async function getCountryFromIP(ip: string): Promise<string> {
-  try {
-    const result = await ip2location.getAll(ip)
-    return result.countryShort || 'Unknown'
-  } catch (error) {
-    console.error('Geolocation error:', error)
-    return 'Unknown'
-  }
-}
 
-async function notifyAdmin(ip: string, country: string, method: string, path: string): Promise<void> {
+async function notifyAdmin(ip: string, method: string, path: string): Promise<void> {
   try {
     const message = `🌐 New Request Alert!
 IP: ${ip}
-Country: ${country}
 Method: ${method}
 Path: ${path}
 Time: ${new Date().toISOString()}`
@@ -111,7 +100,6 @@ async function logToSupabase(data: LogEntry): Promise<void> {
 async function handleError(
   req: NextRequest,
   clientIP: string,
-  country: string,
   startTime: number,
   status: number,
   errorMessage: string,
@@ -126,7 +114,7 @@ async function handleError(
   }
 
   // Fire and forget notification
-  notifyAdmin(clientIP, country, req.method, req.url)
+  notifyAdmin(clientIP, req.method, req.url)
   
   // Fire and forget logging
   logToSupabase({
@@ -141,7 +129,6 @@ async function handleError(
     response_body: responseBody,
     error: errorMessage,
     duration_ms: Date.now() - startTime,
-    country
   })
 
   return new Response(responseBody, {
@@ -154,8 +141,6 @@ export default async function handler(req: NextRequest) {
   const startTime = Date.now()
   const clientIP = req.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown-ip'
   
-  // Start geolocation lookup early
-  const countryPromise = getCountryFromIP(clientIP)
   
   try {
     // Origin check
@@ -164,20 +149,17 @@ export default async function handler(req: NextRequest) {
     const host = origin || referer
 
     if (!host?.includes('chat.gaurish.xyz') && !host?.includes('gaurish.xyz')) {
-      const country = await countryPromise
-      return handleError(req, clientIP, country, startTime, 403, 'Unauthorized Origin')
+      return handleError(req, clientIP, startTime, 403, 'Unauthorized Origin')
     }
 
     // Check if IP is banned
     if (isBannedIP(clientIP)) {
-      const country = await countryPromise
-      return handleError(req, clientIP, country, startTime, 403, 'Your IP is banned from accessing this service')
+      return handleError(req, clientIP, startTime, 403, 'Your IP is banned from accessing this service')
     }
 
     // Check rate limit
     if (isRateLimited(clientIP)) {
-      const country = await countryPromise
-      return handleError(req, clientIP, country, startTime, 429, 'Too Many Requests')
+      return handleError(req, clientIP, startTime, 429, 'Too Many Requests')
     }
 
     // Initialize logging variables
@@ -224,10 +206,9 @@ export default async function handler(req: NextRequest) {
     responseStatus = response.status
     responseHeaders = Object.fromEntries(outgoingHeaders)
 
-    // Get country before handling response
-    const country = await countryPromise
+
     // Fire and forget notification for every request
-    notifyAdmin(clientIP, country, req.method, req.url)
+    notifyAdmin(clientIP, req.method, req.url)
 
     // Handle streaming responses
     const isStreaming = response.headers.get('content-type')?.includes('stream')
@@ -249,7 +230,6 @@ export default async function handler(req: NextRequest) {
         response_headers: responseHeaders,
         response_body: '[Streaming Response]',
         duration_ms: Date.now() - startTime,
-        country
       })
 
       return new Response(streamedResponse, {
@@ -273,7 +253,6 @@ export default async function handler(req: NextRequest) {
       response_headers: responseHeaders,
       response_body: responseBody,
       duration_ms: Date.now() - startTime,
-      country
     })
 
     return new Response(responseBody, {
@@ -285,7 +264,6 @@ export default async function handler(req: NextRequest) {
     const error = e instanceof Error ? e.message : 'Unknown error'
     console.error('Proxy error:', error)
     
-    const country = await countryPromise
-    return handleError(req, clientIP, country, startTime, 500, 'Internal Server Error')
+    return handleError(req, clientIP, startTime, 500, 'Internal Server Error')
   }
 }
