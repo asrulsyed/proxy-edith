@@ -66,7 +66,6 @@ function isRateLimited(ip: string): boolean {
   return false
 }
 
-
 async function notifyAdmin(ip: string, method: string, path: string): Promise<void> {
   try {
     const message = `🌐 New Request Alert!
