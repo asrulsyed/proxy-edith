@@ -57,15 +57,14 @@ function isBannedIP(ip: string): boolean {
 function isRateLimited(ip: string): boolean {
   const now = Date.now()
   const lastRequest = requestTimes.get(ip) || 0
-  
-  if (now - lastRequest < 1000) { // 1 second rate limit
+
+  if (now - lastRequest < 200) { // 200 ms rate limit
     return true
   }
-  
+
   requestTimes.set(ip, now)
   return false
 }
-
 
 async function notifyAdmin(ip: string, method: string, path: string): Promise<void> {
   try {
