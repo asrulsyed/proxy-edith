@@ -114,7 +114,7 @@ async function handleError(
 
   // Fire and forget notification
   notifyAdmin(clientIP, req.method, req.url)
-  
+
   // Fire and forget logging
   logToSupabase({
     ip: clientIP,
@@ -139,15 +139,26 @@ async function handleError(
 export default async function handler(req: NextRequest) {
   const startTime = Date.now()
   const clientIP = req.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown-ip'
-  
-  
+
+
   try {
     // Origin check
+    if (req.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Origin': 'https://mvp-edith.vercel.app',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+          'Access-Control-Allow-Credentials': 'true',
+        },
+      });
+    }
     const origin = req.headers.get('origin')
     const referer = req.headers.get('referer')
     const host = origin || referer
 
-    if (!host?.includes('chat.gaurish.xyz') && !host?.includes('gaurish.xyz')) {
+    if (!host?.includes('chat.gaurish.xyz') && !host?.includes('gaurish.xyz') && !host?.includes('mvp-edith.vercel.app')) {
       return handleError(req, clientIP, startTime, 403, 'Unauthorized Origin')
     }
 
@@ -174,7 +185,7 @@ export default async function handler(req: NextRequest) {
     if (!path) {
       throw new Error('Invalid path')
     }
-    
+
     targetUrl = `${TARGET_BASE_URL}/${path}`
     requestBody = await req.text()
 
@@ -195,9 +206,9 @@ export default async function handler(req: NextRequest) {
 
     // Prepare response headers
     const outgoingHeaders = new Headers(response.headers)
-    outgoingHeaders.set('Access-Control-Allow-Origin', '*')
-    outgoingHeaders.set('Access-Control-Allow-Methods', '*')
-    outgoingHeaders.set('Access-Control-Allow-Headers', '*')
+    outgoingHeaders.set('Access-Control-Allow-Origin', 'https://mvp-edith.vercel.app')
+    outgoingHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+    outgoingHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
     outgoingHeaders.set('Access-Control-Allow-Credentials', 'true')
     outgoingHeaders.delete('transfer-encoding')
     outgoingHeaders.delete('connection')
@@ -239,7 +250,7 @@ export default async function handler(req: NextRequest) {
 
     // Handle regular responses
     responseBody = await response.text()
-    
+
     // Fire and forget logging
     logToSupabase({
       ip: clientIP,
@@ -262,7 +273,8 @@ export default async function handler(req: NextRequest) {
   } catch (e) {
     const error = e instanceof Error ? e.message : 'Unknown error'
     console.error('Proxy error:', error)
-    
+
     return handleError(req, clientIP, startTime, 500, 'Internal Server Error')
   }
 }
+
